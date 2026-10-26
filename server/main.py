@@ -23,8 +23,15 @@ DEFAULT_CONFIG = {
     "lr": 0.03,
 }
 
-EPOCHS_PER_TICK = 5      # how many training steps between two messages
-TICK_DELAY = 0.03        # seconds between messages (controls animation speed)
+# speed level -> (epochs per message, seconds between messages)
+SPEED_LEVELS = {
+    1: (1, 0.06),
+    2: (2, 0.04),
+    3: (5, 0.03),    # default
+    4: (10, 0.03),
+    5: (25, 0.03),
+}
+DEFAULT_SPEED = 3
 GRID = 24                # decision boundary resolution (GRID x GRID)
 
 
@@ -36,6 +43,7 @@ class Session:
         self.config = dict(DEFAULT_CONFIG)
         self.running = False
         self.task = None
+        self.speed = DEFAULT_SPEED
         self.build()
 
     def build(self):
@@ -65,6 +73,7 @@ class Session:
             "points": points,
             "config": self.config,
             "params": self.net.n_params(),
+            "speed": self.speed,
         })
         await self.send_tick(0.0, 0.0)
 
@@ -82,14 +91,19 @@ class Session:
     async def loop(self):
         try:
             while self.running:
+                epochs_per_tick, delay = SPEED_LEVELS[self.speed]
                 loss = acc = 0.0
-                for _ in range(EPOCHS_PER_TICK):
+                for _ in range(epochs_per_tick):
                     loss, acc = self.net.train_step(self.X, self.y)
                     self.epoch += 1
                 await self.send_tick(loss, acc)
-                await asyncio.sleep(TICK_DELAY)
+                await asyncio.sleep(delay)
         except (WebSocketDisconnect, RuntimeError):
             self.running = False
+
+    def set_speed(self, level):
+        if isinstance(level, int) and level in SPEED_LEVELS:
+            self.speed = level
 
     async def start(self):
         if self.running:
@@ -148,6 +162,8 @@ async def websocket_endpoint(ws: WebSocket):
                 await session.pause()
             elif kind == "reset":
                 await session.configure(None)
+            elif kind == "speed":
+                session.set_speed(msg.get("value"))
             elif kind == "configure":
                 await session.configure(msg.get("config"))
     except WebSocketDisconnect:
